@@ -2,7 +2,14 @@
 
 ## Preparation
 
-To set up this lab, we must create a python environment with OpenSSL
+To set up this lab, we must create a python environment with OpenSSL, cryptography and pytest libraries. We run the following batch of commands:
+```python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install cryptography==49.0.0 pytest==9.1.1
+```
+
+Verified with:
 
 `python3 --version`
 > Python 3.12.3
