@@ -61,18 +61,18 @@ def initiate_hs():
     nonce = os.urandom(16)
     return dh_private, dh_public, nonce
 
-def respond_hs(gw_id, node_id, gw_pub, gw_nonce):
+def respond_hs(gw_id, node_id, gw_dh_pub, gw_nonce):
     # generate DH key pair and nonce
     dh_private = ffdh3072.generate_private_key()
     dh_public = dh_private.public_key().public_numbers().y.to_bytes(384, 'big')
     nonce = os.urandom(16)
 
     # generate and hash transcript
-    ts = transcript(gw_id, node_id, gw_pub, dh_public, gw_nonce, nonce)
+    ts = transcript(gw_id, node_id, gw_dh_pub, dh_public, gw_nonce, nonce)
     th = hashlib.sha256(ts).digest()
 
     # key derivation
-    pubkey = dh.DHPublicNumbers(int.from_bytes(gw_pub, 'big'), ffdh3072.parameter_numbers()).public_key()
+    pubkey = dh.DHPublicNumbers(int.from_bytes(gw_dh_pub, 'big'), ffdh3072.parameter_numbers()).public_key()
     z = dh_private.exchange(pubkey).rjust(384, b'\x00')
     keys = derive_keys(z, th)
 
@@ -80,20 +80,20 @@ def respond_hs(gw_id, node_id, gw_pub, gw_nonce):
     sig = sign(NODE_RSA_PRIV, b"node", th)
     return dh_public, nonce, sig, NODE_RSA_PRIV.public_key()
 
-def finalize_hs(gw_id, gw_priv, node_id, gw_pub, node_pub, gw_nonce, node_nonce, sig, node_rsa_pubkey):
+def finalize_hs(gw_id, gw_priv, node_id, gw_dh_pub, node_dh_pub, gw_nonce, node_nonce, sig, node_rsa_pub):
     # generate and hash transcript
-    ts = transcript(gw_id, node_id, gw_pub, node_pub, gw_nonce, node_nonce)
+    ts = transcript(gw_id, node_id, gw_dh_pub, node_dh_pub, gw_nonce, node_nonce)
     th = hashlib.sha256(ts).digest()
 
     # verify signature
-    if not verify(node_rsa_pubkey, b"node", th, sig):
+    if not verify(node_rsa_pub, b"node", th, sig):
         raise ValueError("Signature verification failed")
 
     # key derivation
-    pubkey = dh.DHPublicNumbers(int.from_bytes(node_pub, 'big'), ffdh3072.parameter_numbers()).public_key()
+    pubkey = dh.DHPublicNumbers(int.from_bytes(node_dh_pub, 'big'), ffdh3072.parameter_numbers()).public_key()
     z = gw_priv.exchange(pubkey).rjust(384, b'\x00')
     keys = derive_keys(z, th)
-    
+    return keys
 
 def main():
     # simulate handshake
@@ -104,12 +104,16 @@ def main():
     gw_dh_priv, gw_dh_pub, gw_nonce = initiate_hs()
 
     # node responds to handshake
-    node_dh_pub, node_nonce, sig, node_rsa_pubkey = respond_hs(gw_id, node_id, gw_dh_pub, gw_nonce)
+    node_dh_pub, node_nonce, sig, node_rsa_pub = respond_hs(gw_id, node_id, gw_dh_pub, gw_nonce)
 
     # gateway finalizes handshake
-    finalize_hs(gw_id, gw_dh_priv, node_id, gw_dh_pub, node_dh_pub, gw_nonce, node_nonce, sig, node_rsa_pubkey)
-    print("Handshake completed successfully. Session keys derived.")
-
+    keys = finalize_hs(gw_id, gw_dh_priv, node_id, gw_dh_pub, node_dh_pub, gw_nonce, node_nonce, sig, node_rsa_pub)
+    print("Handshake completed successfully. Session keys derived (private to gateway and node).")
+    print(f"Session ID: {keys['session_id'].hex()}")
+    print(f"Gateway to Node Encryption Key: {keys['k_g2n_enc'].hex()}")
+    print(f"Gateway to Node MAC Key: {keys['k_g2n_mac'].hex()}")
+    print(f"Node to Gateway Encryption Key: {keys['k_n2g_enc'].hex()}")
+    print(f"Node to Gateway MAC Key: {keys['k_n2g_mac'].hex()}")
 
 if __name__ == "__main__":
     main()
