@@ -54,7 +54,6 @@ def open_record(k_enc, k_mac, session_id, expected_header, expected_tag, record)
     cipher = Cipher(algorithms.AES(k_enc), modes.CTR(iv))
     decryptor = cipher.decryptor()
     plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-    print("Decrypted plaintext:", plaintext.decode('utf-8'))
     return plaintext
 
 def main():
@@ -78,7 +77,8 @@ def main():
     print("Tag:", tag.hex())
 
     # Open the record
-    open_record(k_enc, k_mac, session_id, head_info, tag, sealed_record)
+    plaintext = open_record(k_enc, k_mac, session_id, head_info, tag, sealed_record)
+    print("Decrypted plaintext:", plaintext.decode('utf-8'))
 
 if __name__ == "__main__":
     main()
