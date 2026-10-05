@@ -1,12 +1,16 @@
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import os, struct, hashlib, hmac
+import handshake
 
 class Session:
-    def __init__(self, k_enc, k_mac, session_id, direction):
-        self.k_enc = k_enc
-        self.k_mac = k_mac
-        self.session_id = session_id
+    def __init__(self, id, direction):
+        self.id = id
         self.direction = direction
+        self.k_enc = None
+        self.k_mac = None
+        self.k_enc_peer = None
+        self.k_mac_peer = None
+        self.session_id = None
 
         self.send_sequence = 0
         self.recv_sequence = 0
@@ -15,7 +19,7 @@ class Session:
         # create header
         v_byte = struct.pack('>B', head_info['version'])
         d_byte = struct.pack('>B', head_info['direction'])
-        sq_bytes = struct.pack('>Q', head_info['sequence'])
+        sq_bytes = struct.pack('>Q', self.send_sequence)
         msg_t_byte = struct.pack('>B', head_info['message_type'])
 
         # create IV
@@ -49,20 +53,20 @@ class Session:
             raise ValueError("Version mismatch")
         if d_byte != expected_header['direction']:
             raise ValueError("Direction mismatch")
-        if sq_bytes != expected_header['sequence']:
+        if sq_bytes != self.recv_sequence:
             raise ValueError("Sequence mismatch")
         if msg_t_byte != expected_header['message_type']:
             raise ValueError("Message type mismatch")
 
         # compute tag and verify
         iv = self.session_id + record[2:10]
-        tag = hmac.new(self.k_mac, record[:15] + iv + record[15:15+ct_len], hashlib.sha256).digest()
+        tag = hmac.new(self.k_mac_peer, record[:15] + iv + record[15:15+ct_len], hashlib.sha256).digest()
         if not hmac.compare_digest(tag, record[-32:]):
             raise ValueError("Tag mismatch")
 
         # decrypt ciphertext
         ciphertext = record[15:15+ct_len]
-        cipher = Cipher(algorithms.AES(self.k_enc), modes.CTR(iv))
+        cipher = Cipher(algorithms.AES(self.k_enc_peer), modes.CTR(iv))
         decryptor = cipher.decryptor()
         plaintext = decryptor.update(ciphertext) + decryptor.finalize()
 
@@ -70,19 +74,35 @@ class Session:
 
         return plaintext
 
-def main():
-    # Example usage
-    k_enc = os.urandom(32)  
-    k_mac = os.urandom(32)  
-    session_id = os.urandom(8)  
+    def do_handshake(self, peer_session):
+        gw_dh_priv, gw_dh_pub, gw_nonce = handshake.initiate_hs()
+        
+        # node responds to handshake
+        node_dh_pub, node_nonce, sig, node_rsa_pub = handshake.respond_hs(self.id, peer_session.id, gw_dh_pub, gw_nonce)
+    
+        # gateway finalizes handshake
+        keys = handshake.finalize_hs(self.id, gw_dh_priv, peer_session.id, gw_dh_pub, node_dh_pub, gw_nonce, node_nonce, sig, node_rsa_pub)
 
-    gateway = Session(k_enc, k_mac, session_id, direction=0)
-    node = Session(k_enc, k_mac, session_id, direction=1)
+        self.set_keys(keys["k_g2n_enc"], keys["k_g2n_mac"], keys["k_n2g_enc"], keys["k_n2g_mac"], keys["session_id"])
+        peer_session.set_keys(keys["k_n2g_enc"], keys["k_n2g_mac"], keys["k_g2n_enc"], keys["k_g2n_mac"], keys["session_id"])
+
+    def set_keys(self, k_enc, k_mac, k_enc_peer, k_mac_peer, session_id):
+        self.k_enc = k_enc
+        self.k_mac = k_mac
+        self.k_enc_peer = k_enc_peer
+        self.k_mac_peer = k_mac_peer
+        self.session_id = session_id
+        
+
+def main():
+    gateway = Session("gateway", direction=0)
+    node = Session("node", direction=1)
+
+    gateway.do_handshake(node)
 
     head_info = {
         'version': 1,
         'direction': 0,  
-        'sequence': 1,
         'message_type': 1
     }
 
